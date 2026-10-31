@@ -324,6 +324,9 @@ html[data-theme="light"] header{background:linear-gradient(180deg,var(--bg) 62%,
 mark.rep{background:rgba(196,122,99,.18);color:var(--clay);border-radius:3px;padding:0 2px}
 .repnote{font-size:11.5px;color:var(--dim2);margin-top:10px;padding-top:8px;border-top:1px solid var(--line)}
 .repnote b{color:var(--clay)}
+.fx{border-bottom:1.5px dashed var(--clay);cursor:help;padding-bottom:1px}
+.fx:focus-visible{outline:2px solid var(--clay);outline-offset:2px;border-radius:3px}
+.fx .fxm,.fxm{font-style:normal;font-size:10px;color:var(--clay);margin-left:2px;vertical-align:super;line-height:1}
 
 /* ================= 默写 ================= */
 .wcard{border:1px solid var(--line);border-radius:var(--r);padding:15px 16px;margin-bottom:12px;background:var(--panel2)}
@@ -2610,7 +2613,7 @@ kbd{font-family:var(--serif);font-size:10.5px;border:1px solid var(--line2);bord
             else { idx = ctx.plan.length ? ctx.plan.shift() : 0; }
           }
           val = variantOf(idx, lang);
-          out.push({ t: "slot", k: k2, v: val });
+          out.push({ t: "slot", k: k2, v: val, fx: !canSwap });
         } else {
           val = slotVal(k2, lang, ctx.locals);
           if (val && k2 === "mconn") out.push({ t: "txt", v: val });
@@ -2681,6 +2684,8 @@ kbd{font-family:var(--serif);font-size:10.5px;border:1px solid var(--line2);bord
     return null;
   }
 
+  var FX0 = "\uE000", FX1 = "\uE001";
+  function stripFx(s) { return String(s).replace(/[\uE000\uE001]/g, ""); }
   function buildSentence(sid, rep) {
     var opt = currentOpt(sid);
     var plan = [], ctx = { mode: "record", rep: rep, plan: plan, locals: localsFor(sid) };
@@ -2689,14 +2694,16 @@ kbd{font-family:var(--serif);font-size:10.5px;border:1px solid var(--line2);bord
     var zhParts = fillParts(opt.zh || opt.en, "zh", opt, zctx);
     var enList = polishTokens(enParts, !opt.mid);
     var en = enList.map(function (t) { return t.v; }).join("");
+    var enM = enList.map(function (t) { return t.fx ? FX0 + t.v + FX1 : t.v; }).join("");
     var conn = (sid === "u5" || sid === "u6" || sid === "u7") ? (state.conns[sid] || "") : "";
-    if (conn) en = conn + ", " + en.replace(/^\s+/, "");
+    if (conn) { en = conn + ", " + en.replace(/^\s+/, ""); enM = conn + ", " + enM.replace(/^\s+/, ""); }
     en = finalPolish(en);
-    if (opt.mid && en) en = en.charAt(0).toLowerCase() + en.slice(1);
+    enM = finalPolish(enM);
+    if (opt.mid && en) { en = en.charAt(0).toLowerCase() + en.slice(1); enM = enM.charAt(0).toLowerCase() + enM.slice(1); }
     var zh = zhTidy(zhParts.map(function (t) { return t.v; }).join(""));
     var zconn = (sid === "u5" || sid === "u6" || sid === "u7") ? (CONN_ZH[state.conns[sid] || ""] || "") : "";
     if (zconn) zh = zconn + "，" + zh;
-    return { sid: sid, opt: opt, en: en, zh: zh, parts: enList,
+    return { sid: sid, opt: opt, en: en, enM: enM, zh: zh, parts: enList,
       words: wordCount(en), no: SENT[sid].no, name: SENT[sid].name, tip: SENT[sid].tip || "", note: opt.note || "" };
   }
 
@@ -2714,9 +2721,10 @@ kbd{font-family:var(--serif);font-size:10.5px;border:1px solid var(--line2);bord
         if (r.opt.mid && view.length) {
           var prev = view[view.length - 1];
           prev.en = finalPolish(prev.en + " " + r.en);
+          prev.enM = finalPolish(prev.enM + " " + r.enM);
           prev.zh = prev.zh + r.zh;
           prev.words += r.words;
-        } else view.push({ sid: r.sid, en: r.en, zh: r.zh, words: r.words, no: r.no, name: r.name, opt: r.opt });
+        } else view.push({ sid: r.sid, en: r.en, enM: r.enM, zh: r.zh, words: r.words, no: r.no, name: r.name, opt: r.opt });
       });
       paras.push({ pid: pid, title: p.title, sub: p.sub, sents: sents, view: view });
     });
@@ -3121,15 +3129,25 @@ kbd{font-family:var(--serif);font-size:10.5px;border:1px solid var(--line2);bord
 
     var freq = frequentWords(e);
     var words = freq.map(function (f) { return f.w; });
+    var tv0 = (state.slots.topic && state.slots.topic.en) || "";
+    var tn0 = 0;
+    if (tv0) e.paras.forEach(function (p) { p.view.forEach(function (s) { tn0 += s.en.split(tv0).length - 1; }); });
+    var showFx = tn0 >= 3, fxCount = 0;
+    var synAlt = (topicMeta().syn.filter(function (x) { return x[0] !== "it"; })[0] || [""])[0];
+    var fxTip = "这里的主题词在介词后面，系统没法自动替换。" + (synAlt ? "可手动改成「" + synAlt + "」，" : "") + "或用你自己的简称，或改写句式。";
 
     e.paras.forEach(function (p, i) {
       h += '<div class="pv-para"><div class="ph">' + ["Paragraph I", "Paragraph II", "Paragraph III"][i] + "</div>";
       if (!p.view.length) { h += '<div class="pv-empty">这一段被删掉了</div>'; }
       p.view.forEach(function (s, si) {
-        var en = esc(s.en);
+        var en = esc(s.enM || s.en);
         words.forEach(function (w) {
           en = en.replace(new RegExp("\\b" + w + "\\b", "gi"), function (mm) { return '<mark class="rep">' + mm + "</mark>"; });
         });
+        if (showFx) {
+          en = en.replace(/\uE000/g, function () { fxCount++; return '<span class="fx" tabindex="0" data-fx="1" title="' + esc(fxTip) + '">'; })
+            .replace(/\uE001/g, '<i class="fxm">✎</i></span>');
+        } else en = stripFx(en);
         h += '<div class="pv-sent"><div class="n">' + (si + 1) + '</div><div>' +
           '<div class="en">' + en + "</div>" + (state.zh ? '<div class="zh">' + esc(s.zh) + "</div>" : "") + "</div></div>";
       });
@@ -3149,7 +3167,9 @@ kbd{font-family:var(--serif);font-size:10.5px;border:1px solid var(--line2);bord
         h += "重复偏多的词：" + freq.map(function (f) { return "<b>" + esc(f.w) + "</b> ×" + f.n; }).join(" · ");
       }
       if (tn >= 3) h += (freq.length ? "；" : "") + "主题词原样出现 <b>" + tn + "</b> 次";
-      h += "　—— 主语位置会自动换成 this trend / such a phenomenon / it；「of / to / in + 主题词」的位置没法换，可改写句式绕开。</div>";
+      h += "　—— 主语位置会自动换成 this trend / such a phenomenon / it。";
+      if (fxCount) h += "另有 <b>" + fxCount + "</b> 处在「of / to / in」等介词后面，系统换不了，已用<span class=\"fx\" style=\"cursor:default\">虚线<i class=\"fxm\">✎</i></span>标出，点一下看建议。";
+      h += "</div>";
     }
 
     $("#dockBody").innerHTML = h;
@@ -3333,6 +3353,8 @@ kbd{font-family:var(--serif);font-size:10.5px;border:1px solid var(--line2);bord
       if (window.innerWidth <= 1180) $("#dock").classList.toggle("open");
     });
     $("#dockBody").addEventListener("click", function (e) {
+      var fxEl = e.target.closest("[data-fx]");
+      if (fxEl) { toast(fxEl.getAttribute("title") || ""); return; }
       var cut = e.target.closest("[data-cut]");
       if (cut) {
         var g = availableCuts()[parseInt(cut.getAttribute("data-cut"), 10)];
